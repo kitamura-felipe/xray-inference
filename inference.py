@@ -13,6 +13,16 @@ from dataset import InferenceXRayDataset
 from models import load_model
 from tqdm import tqdm
 
+BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+STATE_DICT_PATH = os.path.join(BASE_PATH, "models", "trained_models")
+
+STATE_DICT_FPATHS = {
+    # "alexnet": os.path.join(STATE_DICT_PATH, "alexnet.pth"),
+    "densenet": os.path.join(STATE_DICT_PATH, "densenet201.pth"),
+    # "resnet101": os.path.join(STATE_DICT_PATH, "resnet101.pth"),
+    # "inceptionv4": os.path.join(STATE_DICT_PATH, "inceptionv4.pth")
+}
+
 
 def set_seeds(worker_id):
     seed = torch.initial_seed() % 2 ** 31
@@ -74,7 +84,6 @@ if __name__ == "__main__":
 
     assert_keys = [
         "model_name",
-        "model_state_dict",
         "input_size",
         "data_path"
         "batch_size",
@@ -83,7 +92,11 @@ if __name__ == "__main__":
     config = load_config(args.config_fpath, assert_keys)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    state_dict = torch.load(config["model_state_dict"])
+
+    if "model_state_dict" in config and config["model_state_dict"] is not None:
+        state_dict = torch.load(config["model_state_dict"])
+    else:
+        state_dict = torch.load(STATE_DICT_FPATHS[config["model_name"]])
     model = load_model(config["model_name"], state_dict)
 
     transform = transforms.Compose([

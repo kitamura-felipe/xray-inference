@@ -12,7 +12,7 @@ class ModelLoaders:
         return model
 
     @classmethod
-    def load_densenet(cls, num_classes):
+    def load_densenet201(cls, num_classes):
         model = densenet201(pretrained=True)
         model.classifier = nn.Linear(model.classifier.in_features, num_classes)
         return model
