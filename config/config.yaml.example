@@ -1,0 +1,5 @@
+model_name: "densenet201"
+input_size: (256, 256)
+data_path: /path/to/data/folder
+batch_size: 32
+save_path: /path/to/save/folder
