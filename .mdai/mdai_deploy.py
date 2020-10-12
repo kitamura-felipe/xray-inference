@@ -30,72 +30,21 @@ class MDAIModel:
 
     def predict(self, data):
         """
-        The input data has the following schema:
-
-        {
-            "instances": [
-                {
-                    "file": "bytes"
-                    "tags": {
-                        "StudyInstanceUID": "str",
-                        "SeriesInstanceUID": "str",
-                        "SOPInstanceUID": "str",
-                        ...
-                    }
-                },
-                ...
-            ],
-            "args": {
-                "arg1": "str",
-                "arg2": "str",
-                ...
-            }
-        }
-
-        Model scope specifies whether an entire study, series, or instance is given to the model.
-        If the model scope is 'INSTANCE', then `instances` will be a single instance (list length of 1).
-        If the model scope is 'SERIES', then `instances` will be a list of all instances in a series.
-        If the model scope is 'STUDY', then `instances` will be a list of all instances in a study.
-
-        The additional `args` dict supply values that may be used in a given run.
-
-        For a single instance dict, `files` is the raw binary data representing a DICOM file, and
-        can be loaded using: `ds = pydicom.dcmread(BytesIO(instance["file"]))`.
-
-        The results returned by this function should have the following schema:
-
-        [
-            {
-                "type": "str", // 'NONE', 'ANNOTATION', 'IMAGE', 'DICOM', 'TEXT'
-                "study_uid": "str",
-                "series_uid": "str",
-                "instance_uid": "str",
-                "frame_number": "int",
-                "class_index": "int",
-                "data": {},
-                "probability": "float",
-                "explanations": [
-                    {
-                        "name": "str",
-                        "description": "str",
-                        "content": "bytes",
-                        "content_type": "str",
-                    },
-                    ...
-                ],
-            },
-            ...
-        ]
-
-        The DICOM UIDs must be supplied based on the scope of the label attached to `class_index`.
+        See https://github.com/mdai/model-deploy/blob/master/mdai/server.py for details on the
+        schema of `data` and the required schema of the outputs returned by this function.
         """
-        input_instances = data["instances"]
-        results = []
+        input_files = data["files"]
+
         self.model.eval()
-        for instance in input_instances:
-            tags = instance["tags"]
+
+        outputs = []
+
+        for file in input_files:
+            if file["content_type"] != "application/dicom":
+                continue
+
             try:
-                ds = pydicom.dcmread(BytesIO(instance["file"]))
+                ds = pydicom.dcmread(BytesIO(file["content"]))
                 arr = ds.pixel_array
             except:
                 continue
@@ -106,52 +55,82 @@ class MDAIModel:
             if ds.PhotometricInterpretation == "MONOCHROME1":
                 arr = 255 - arr
 
-            img = Image.fromarray(arr).convert("RGB")
-            img = transform_image(img)
+            dicom_uids = {
+                "study_uid": ds.StudyInstanceUID,
+                "series_uid": ds.SeriesInstanceUID,
+                "instance_uid": ds.SOPInstanceUID,
+            }
 
-            with torch.set_grad_enabled(False):
-                outputs = self.model(img.to(self.device))
-                preds = torch.sigmoid(outputs)
-            y_prob = preds.cpu().numpy()
-            y_classes = y_prob >= 0.5
-            class_indices = np.where(y_classes.astype("bool"))[1]
-            if len(class_indices) == 0:
-                # no outputs, return 'NONE' output type
-                result = {
-                    "type": "NONE",
-                    "study_uid": tags["StudyInstanceUID"],
-                    "series_uid": tags["SeriesInstanceUID"],
-                    "instance_uid": tags["SOPInstanceUID"],
-                    "frame_number": None,
-                }
-                results.append(result)
-            else:
-                for class_index in class_indices:
-                    probability = y_prob[0][class_index]
+            # Handle multi-frame instances
+            try:
+                num_frames = int(ds.NumberOfFrames)
+            except:
+                num_frames = 0
+            is_multi_frame = num_frames > 1 and arr.shape[0] == num_frames
 
-                    gradcam = GradCam(self.model)
-                    gradcam_output = gradcam.generate_cam(
-                        img.to(self.device), arr, class_index
+            if is_multi_frame:
+                for frame_number in range(num_frames):
+                    arr_outputs = self.predict_on_arr(
+                        arr[frame_number], dicom_uids, frame_number=frame_number
                     )
-                    gradcam_output_buffer = BytesIO()
-                    gradcam_output.save(gradcam_output_buffer, format="PNG")
+                    outputs.extend(arr_outputs)
+            else:
+                arr_outputs = self.predict_on_arr(arr, dicom_uids)
+                outputs.extend(arr_outputs)
 
-                    result = {
-                        "type": "ANNOTATION",
-                        "study_uid": tags["StudyInstanceUID"],
-                        "series_uid": tags["SeriesInstanceUID"],
-                        "instance_uid": tags["SOPInstanceUID"],
-                        "frame_number": None,
-                        "class_index": int(class_index),
-                        "data": None,
-                        "probability": float(probability),
-                        "explanations": [
-                            {
-                                "name": "Grad-CAM",
-                                "content": gradcam_output_buffer.getvalue(),
-                                "content_type": "image/png",
-                            },
-                        ],
-                    }
-                    results.append(result)
-            return results
+            return outputs
+
+    def predict_on_arr(self, arr, dicom_uids, frame_number=None):
+        img = Image.fromarray(arr).convert("RGB")
+        img = transform_image(img)
+
+        outputs = []
+
+        with torch.set_grad_enabled(False):
+            preds = torch.sigmoid(self.model(img.to(self.device)))
+
+        y_prob = preds.cpu().numpy()
+        y_classes = y_prob >= 0.5
+        class_indices = np.where(y_classes.astype("bool"))[1]
+
+        if len(class_indices) == 0:
+            # no outputs, return 'NONE' output type
+            output = {
+                "type": "NONE",
+                "study_uid": dicom_uids.get("study_uid"),
+                "series_uid": dicom_uids.get("series_uid"),
+                "instance_uid": dicom_uids.get("instance_uid"),
+                "frame_number": frame_number,
+            }
+            outputs.append(output)
+        else:
+            for class_index in class_indices:
+                probability = y_prob[0][class_index]
+
+                gradcam = GradCam(self.model)
+                gradcam_output = gradcam.generate_cam(
+                    img.to(self.device), arr, class_index
+                )
+                gradcam_output_buffer = BytesIO()
+                gradcam_output.save(gradcam_output_buffer, format="PNG")
+
+                output = {
+                    "type": "ANNOTATION",
+                    "study_uid": dicom_uids.get("study_uid"),
+                    "series_uid": dicom_uids.get("series_uid"),
+                    "instance_uid": dicom_uids.get("instance_uid"),
+                    "frame_number": frame_number,
+                    "class_index": int(class_index),
+                    "data": None,
+                    "probability": float(probability),
+                    "explanations": [
+                        {
+                            "name": "Grad-CAM",
+                            "content": gradcam_output_buffer.getvalue(),
+                            "content_type": "image/png",
+                        },
+                    ],
+                }
+                outputs.append(output)
+
+        return outputs

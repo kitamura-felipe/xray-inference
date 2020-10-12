@@ -12,7 +12,6 @@ def load_model(n_classes, state_dict=None, **kwargs):
 
 
 def transform_image(img):
-
     transform = transforms.Compose(
         [
             transforms.Resize((256, 256)),
