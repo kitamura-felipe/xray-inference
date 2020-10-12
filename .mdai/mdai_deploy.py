@@ -56,9 +56,9 @@ class MDAIModel:
                 arr = 255 - arr
 
             dicom_uids = {
-                "study_uid": ds.StudyInstanceUID,
-                "series_uid": ds.SeriesInstanceUID,
-                "instance_uid": ds.SOPInstanceUID,
+                "study_uid": str(ds.StudyInstanceUID),
+                "series_uid": str(ds.SeriesInstanceUID),
+                "instance_uid": str(ds.SOPInstanceUID),
             }
 
             # Handle multi-frame instances
