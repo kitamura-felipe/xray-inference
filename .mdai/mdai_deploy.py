@@ -23,7 +23,8 @@ class MDAIModel:
             self.device = torch.device("cpu")
             gpu_ids = []
         state_dict = torch.load(
-            os.path.join(root_path, "models", "trained_models", "densenet201.pth")
+            os.path.join(root_path, "models", "trained_models", "densenet201.pth"),
+            map_location = self.device
         )
         self.model = load_model(25, state_dict)
         self.model = self.model.to(self.device)
