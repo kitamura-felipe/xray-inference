@@ -1,5 +1,5 @@
 pandas==1.0.0
-Pillow==6.2.1
+Pillow==7.1.0
 pretrainedmodels==0.7.4
 pydicom==1.4.1
 PyYAML==5.3
