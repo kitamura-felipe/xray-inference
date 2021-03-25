@@ -2,7 +2,7 @@ pandas==1.0.0
 Pillow==7.1.0
 pretrainedmodels==0.7.4
 pydicom==1.4.1
-PyYAML==5.3
+PyYAML==5.4
 torch==1.4.0
 torchvision==0.5.0
 tqdm==4.42.0
